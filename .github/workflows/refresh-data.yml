@@ -1,0 +1,55 @@
+name: Refresh data
+
+# FANZA同人からサークルのデータを取り直す。
+# API ID とアフィリエイトIDは GitHub Secrets から渡す。
+
+on:
+  schedule:
+    - cron: '0 18 * * 0'   # 毎週月曜 03:00 JST
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      changed: ${{ steps.commit.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - env:
+          FANZA_API_ID: ${{ secrets.FANZA_API_ID }}
+          FANZA_AFFILIATE_ID: ${{ secrets.FANZA_AFFILIATE_ID }}
+        run: python scripts/fetch-circles.py public/data/circles.json
+
+      - name: 変化があれば commit する
+        id: commit
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add public/data/circles.json
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "データに変化はありませんでした。"
+            exit 0
+          fi
+          git commit -m "FANZA同人のサークルデータを取り直す"
+          git pull --rebase origin main
+          git push
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+  # bot の push では deploy が起動しないため、ここから明示的に呼ぶ。
+  deploy:
+    needs: refresh
+    if: needs.refresh.outputs.changed == 'true'
+    uses: ./.github/workflows/deploy.yml
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
